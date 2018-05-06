@@ -10,13 +10,15 @@ import (
 	"github.com/ursiform/sleuth"
 )
 
-const ipURL = "sleuth://ip-discovery/ip"
+const ipURL = "sleuth://ip-discovery/ip:9872"
 
 func main() {
 	ip, err := autodiscover()
 	if err != nil {
 		log.Panic(err)
 	}
+
+	log.Print("Found IP:", ip)
 
 	vlc := exec.Command("vlc", "-vvv", fmt.Sprintf("http://%s:8080", ip))
 
@@ -27,7 +29,12 @@ func main() {
 }
 
 func autodiscover() (string, error) {
-	client, err := sleuth.New(new(sleuth.Config))
+	config := &sleuth.Config{
+		Interface: "Wi-Fi",
+		LogLevel:  "debug",
+	}
+
+	client, err := sleuth.New(config)
 	defer client.Close()
 	if err != nil {
 		return "", err

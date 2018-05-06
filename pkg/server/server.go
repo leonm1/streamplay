@@ -5,19 +5,23 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os/exec"
 
 	"github.com/ursiform/sleuth"
 )
 
 func main() {
 	//systray.Run(onReady, onExit)
-	go autodiscover()
+	autodiscover()
+	/*
+		ip := string(GetOutboundIP())
 
-	ip := string(GetOutboundIP())
+		vlc := exec.Command("C:\\Program Files\\VideoLAN\\VLC\\vlc.exe", "-vvv", "input_stream", "--sout",
+			fmt.Sprintf("'#transcode{acodec=vorb,ab=128}:standard{access=http,mux=ogg,dst=%s:8080}'", ip))
 
-	exec.Command("vlc", "-vvv", "dshow:// :dshow-vdev=\"None\" :dshow-adev=\"\"", "--sout",
-		fmt.Sprintf("'#transcode{acodec=vorb,ab=128}:standard{access=http,mux=ogg,dst=%s:8080}'", ip))
+		err := vlc.Run()
+		if err != nil {
+			log.Fatal(err)
+		}*/
 }
 
 /*
@@ -29,7 +33,14 @@ type ipHandler struct{}
 func autodiscover() {
 	handler := new(ipHandler)
 
-	client, err := sleuth.New(&sleuth.Config{Service: "ip-discovery", Handler: handler})
+	config := &sleuth.Config{
+		Handler:   handler,
+		Interface: "Wi-Fi",
+		LogLevel:  "debug",
+		Service:   "ip-discovery",
+	}
+
+	client, err := sleuth.New(config)
 	defer client.Close()
 	if err != nil {
 		log.Fatal(err)
@@ -37,7 +48,10 @@ func autodiscover() {
 		log.Println("Ready")
 	}
 
-	http.ListenAndServe(":9872", handler)
+	err = http.ListenAndServe(":80", handler)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 // ipHandler's ServeHTTP responds to any
