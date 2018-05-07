@@ -10,7 +10,8 @@ import (
 	"github.com/ursiform/sleuth"
 )
 
-const ipURL = "sleuth://ip-discovery/ip:9872"
+const ipURL = "sleuth://streamplay-ip/ip:9872"
+const ffmpegPort = "7843"
 
 func main() {
 	ip, err := autodiscover()
@@ -18,9 +19,9 @@ func main() {
 		log.Panic(err)
 	}
 
-	log.Print("Found IP:", ip)
+	log.Print("Found IP: ", ip)
 
-	vlc := exec.Command("vlc", "-vvv", fmt.Sprintf("http://%s:8080", ip))
+	vlc := exec.Command("ffplay", fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort))
 
 	err = vlc.Run()
 	if err != nil {
@@ -30,7 +31,7 @@ func main() {
 
 func autodiscover() (string, error) {
 	config := &sleuth.Config{
-		Interface: "Wi-Fi",
+		Interface: "wlp1s0",
 		LogLevel:  "debug",
 	}
 
@@ -42,7 +43,7 @@ func autodiscover() (string, error) {
 	log.Println("Ready")
 
 	// Wait for server to come online
-	client.WaitFor("ip-discovery")
+	client.WaitFor("streamplay-ip")
 
 	req, err := http.NewRequest("GET", ipURL, nil)
 	if err != nil {
