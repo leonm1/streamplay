@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -14,7 +15,11 @@ const ipURL = "sleuth://streamplay-ip/ip:9872"
 const ffmpegPort = "7843"
 
 func main() {
-	ip, err := autodiscover()
+	var iface string
+	flag.StringVar(&iface, "iface", "eth0", "Network interface on which to listen")
+	flag.Parse()
+
+	ip, err := autodiscover(iface)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -23,15 +28,16 @@ func main() {
 
 	vlc := exec.Command("ffplay", fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort))
 
-	err = vlc.Run()
+	out, err := vlc.CombinedOutput()
+	fmt.Printf("%s", out)
 	if err != nil {
 		log.Panic(err)
 	}
 }
 
-func autodiscover() (string, error) {
+func autodiscover(iface string) (string, error) {
 	config := &sleuth.Config{
-		Interface: "wlp1s0",
+		Interface: iface,
 		LogLevel:  "debug",
 	}
 

@@ -1,12 +1,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os/exec"
-	"flag"
 
 	"github.com/ursiform/sleuth"
 )
@@ -18,8 +18,12 @@ const ffmpegPort = "7843"
 */
 
 func printAudioDevices() {
-	cmd := exec.Command("ffmpeg", "-sources", "dshow")
-	fmt.Print(cmd.CombinedOutput())
+	cmd := exec.Command("ffmpeg", "-list_devices", "true", "-f", "dshow", "-i", "dummy")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Print(err)
+	}
+	fmt.Printf("%s", output)
 }
 
 /*
@@ -35,7 +39,7 @@ func autodiscover() {
 
 	config := &sleuth.Config{
 		Handler:   handler,
-		Interface: "wlp1s0",
+		Interface: "Wi-Fi",
 		LogLevel:  "debug",
 		Service:   "streamplay-ip",
 	}
@@ -76,35 +80,9 @@ func GetOutboundIP() net.IP {
 	return localAddr.IP
 }
 
-// main starts the autodiscovery server, parses flags, and begins streaming
-func main() {
-	var (
-		listAudio, listVideo bool
-		aSrc, vSrc string
-	)
-
-	flag.BoolVar(&listAudio, "list-audio", false, "Lists available audio devices")
-	flag.BoolVar(&listVideo, "list-video", false, "UNDEFINED: Lists available video devices")
-	flag.StringVar(&aSrc, "a", "", "Audio device to stream")
-	flag.StringVar(&vSrc, "v", "", "Video device to use")
-
-	// Start autodiscovery server
-	go autodiscover()
-
-	select {
-	case listAudio:
-		
-	case listVideo:
-		fmt.Print("This hasn't been implemented yet!")
-	default:
-		err := stream(vSrc, aSrc)
-	}
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-}
+/*
+	Functions to implement streaming with ffmpeg
+*/
 
 func stream(vSrc, aSrc string) error {
 	ip := fmt.Sprintf("%v", GetOutboundIP())
@@ -112,29 +90,61 @@ func stream(vSrc, aSrc string) error {
 	// Program args for ffmpeg
 	args := []string{
 		// 'dshow' us used for windows only
-		 "-f", "dshow", 
+		"-f", "dshow",
 
-		 // Inputs
-		 "-i", fmt.Sprintf("video='%s':audio='%s'", vSrc, aSrc),
+		// Inputs
+		// With video: "-i", fmt.Sprintf("video='%s':audio='%s'", vSrc, aSrc),
+		"-i", fmt.Sprintf("audio=%s", aSrc),
 
-		 // Video options
-		"-preset", "ultrafast", "-vcodec", "libx264", "-tune", "zerolatency", 
+		// Video options
+		"-preset", "ultrafast", "-vcodec", "libx264", "-tune", "zerolatency",
 		"-r", "24", "-async", "1",
 
 		// Audio options
-		"-acodec", "aac", "-ab", "128k", "-ar", "44100"
+		"-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100",
 
 		// Output options
-		"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtp", 
+		"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtp",
 		fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort),
 	}
 
 	stream := exec.Command("ffmpeg", args...)
 
-	err := stream.Start()
+	out, err := stream.CombinedOutput()
+	fmt.Printf("%s", out)
 	if err != nil {
 		return err
 	}
 
 	stream.Wait()
+
+	return nil
+}
+
+// main starts the autodiscovery server, parses flags, and begins streaming
+func main() {
+	var (
+		listAudio, listVideo bool
+		aSrc, vSrc           string
+		err                  error
+	)
+
+	flag.BoolVar(&listAudio, "list-audio", false, "Lists available audio devices")
+	flag.BoolVar(&listVideo, "list-video", false, "UNDEFINED: Lists available video devices")
+	flag.StringVar(&aSrc, "a", "none", "Audio device to stream")
+	flag.StringVar(&vSrc, "v", "none", "Video device to use")
+
+	flag.Parse()
+
+	// Start autodiscovery server
+	go autodiscover()
+
+	if listAudio {
+		printAudioDevices()
+	} else {
+		err = stream(vSrc, aSrc)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 }
