@@ -3,17 +3,20 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/ursiform/sleuth"
 )
 
 const ffmpegPort = "7843"
+const ipURL = "sleuth://streamplay-ip/ip:9872"
 
 /*
 	Functions to handle selection of audio device
@@ -34,62 +37,50 @@ func printAudioDevices() {
 	Functions to handle autodiscovery of service on local network
 */
 
-type ipHandler struct{}
-
-// autodiscover locates other streamplay devices on the network and returns
-// the ip of the first server found
-func autodiscover() {
-	handler := new(ipHandler)
-
+func autodiscover(iface string) (string, error) {
 	config := &sleuth.Config{
-		Handler:   handler,
-		Interface: "Wi-Fi",
-		LogLevel:  "error",
-		Service:   "streamplay-ip",
+		Interface: iface,
+		LogLevel:  "debug",
 	}
 
 	client, err := sleuth.New(config)
 	defer client.Close()
 	if err != nil {
-		log.Fatal(err)
-	} else {
-		log.Println("Ready")
+		return "", err
 	}
+	log.Println("Ready")
 
-	err = http.ListenAndServe(":8080", handler)
+	// Wait for server to come online
+	client.WaitFor("streamplay-ip")
+
+	// Wait for server to finish coming online
+	time.Sleep(time.Second)
+
+	req, err := http.NewRequest("GET", ipURL, nil)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
-}
 
-// ipHandler's ServeHTTP responds to any
-func (h *ipHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	r.Body.Close()
-
-	body := GetOutboundIP()
-
-	fmt.Fprint(w, body)
-}
-
-// GetOutboundIP gets the preferred outbound ip of this machine
-func GetOutboundIP() net.IP {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	res, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
-	defer conn.Close()
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	ip, err := ioutil.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		return "", err
+	}
 
-	return localAddr.IP
+	return string(ip), nil
 }
 
 /*
 	Functions to implement streaming with ffmpeg
 */
 
-func stream(vSrc, aSrc string) error {
-	ip := fmt.Sprintf("%v", GetOutboundIP())
+func stream(vSrc, aSrc, ip string) {
+	log.Printf("Starting stream to %s...\n", ip)
 
 	// Program args for ffmpeg
 	args := []string{
@@ -99,56 +90,56 @@ func stream(vSrc, aSrc string) error {
 		// Inputs
 		// With video: "-i", fmt.Sprintf("video='%s':audio='%s'", vSrc, aSrc),
 		"-i", fmt.Sprintf("audio=%s", aSrc),
-
-		// Video options
-		"-preset", "ultrafast", "-vcodec", "libx264", "-tune", "zerolatency",
-		"-r", "24", "-async", "1",
-
+		/*
+			// Video options
+			"-preset", "ultrafast", "-vcodec", "libx264", "-tune", "zerolatency",
+			"-r", "24", "-async", "1",
+		*/
 		// Audio options
 		"-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100",
 
 		// Output options
-		"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtp",
+		"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtmp",
 		fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort),
 	}
 
 	stream := exec.Command("ffmpeg", args...)
 
-	out, err := stream.CombinedOutput()
-	fmt.Printf("%s", out)
+	stream.Stdout = os.Stdout
+	stream.Stderr = os.Stderr
+	err := stream.Start()
 	if err != nil {
-		return err
+		log.Print(err)
 	}
-
 	stream.Wait()
-
-	return nil
 }
 
 // main starts the autodiscovery server, parses flags, and begins streaming
 func main() {
 	var (
 		listAudio, listVideo bool
-		aSrc, vSrc           string
-		err                  error
+		aSrc, vSrc, iface    string
 	)
 
 	flag.BoolVar(&listAudio, "list-audio", false, "Lists available audio devices")
 	flag.BoolVar(&listVideo, "list-video", false, "UNDEFINED: Lists available video devices")
 	flag.StringVar(&aSrc, "a", "", "Audio device to stream")
 	flag.StringVar(&vSrc, "v", "", "Video device to use")
+	flag.StringVar(&iface, "iface", "Wi-Fi", "Network interface on which to listen")
 
 	flag.Parse()
 
-	// Start autodiscovery server
-	go autodiscover()
-
-	if listAudio {
-		printAudioDevices()
-	} else {
-		err = stream(vSrc, aSrc)
+	for {
+		// Start autodiscovery server
+		ip, err := autodiscover(iface)
 		if err != nil {
-			log.Fatal(err)
+			log.Print("error in autodiscovery: ", err)
+		}
+
+		if listAudio {
+			printAudioDevices()
+		} else {
+			go stream(vSrc, aSrc, ip)
 		}
 	}
 }

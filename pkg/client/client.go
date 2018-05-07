@@ -3,11 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"os/exec"
-	"time"
 
 	"github.com/ursiform/sleuth"
 )
@@ -20,56 +20,66 @@ func main() {
 	flag.StringVar(&iface, "iface", "wlan0", "Network interface on which to listen")
 	flag.Parse()
 
-	ip, err := autodiscover(iface)
-	if err != nil {
-		log.Panic(err)
-	}
+	go autodiscover(iface)
+	ip := GetOutboundIP()
 
-	log.Print("Found IP: ", ip)
+	stream := exec.Command("ffplay", "-nodisp", fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort))
+	stream.Stderr = os.Stderr
+	stream.Stdout = os.Stdout
 
-	vlc := exec.Command("ffplay", "-nodisp", fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort))
-
-	out, err := vlc.CombinedOutput()
-	fmt.Printf("%s", out)
-	if err != nil {
-		log.Panic(err)
-	}
+	stream.Run()
 }
 
-func autodiscover(iface string) (string, error) {
+/*
+	Functions to handle autodiscovery of service on local network
+*/
+
+type ipHandler struct{}
+
+// autodiscover locates other streamplay devices on the network and returns
+// the ip of the first server found
+func autodiscover(iface string) {
+	handler := new(ipHandler)
+
 	config := &sleuth.Config{
+		Handler:   handler,
 		Interface: iface,
-		LogLevel:  "error",
+		LogLevel:  "debug",
+		Service:   "streamplay-ip",
 	}
 
 	client, err := sleuth.New(config)
 	defer client.Close()
 	if err != nil {
-		return "", err
+		log.Fatal(err)
+	} else {
+		log.Println("Ready")
 	}
-	log.Println("Ready")
 
-	// Wait for server to come online
-	client.WaitFor("streamplay-ip")
-
-	// Wait for server to finish coming online
-	time.Sleep(time.Second)
-
-	req, err := http.NewRequest("GET", ipURL, nil)
+	err = http.ListenAndServe(":8080", handler)
 	if err != nil {
-		return "", err
+		log.Fatal(err)
 	}
+}
 
-	res, err := client.Do(req)
+// ipHandler's ServeHTTP responds to any
+func (h *ipHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.Body.Close()
+
+	body := GetOutboundIP()
+
+	fmt.Fprint(w, body)
+}
+
+// GetOutboundIP gets the preferred outbound ip of this machine
+func GetOutboundIP() net.IP {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		return "", err
+		log.Fatal(err)
 	}
+	defer conn.Close()
 
-	ip, err := ioutil.ReadAll(res.Body)
-	res.Body.Close()
-	if err != nil {
-		return "", err
-	}
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
 
-	return string(ip), nil
+	return localAddr.IP
 }

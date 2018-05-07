@@ -108,6 +108,8 @@ func stream(vSrc, aSrc string) error {
 
 	stream := exec.Command("ffmpeg", args...)
 
+	fmt.Println(stream)
+
 	out, err := stream.CombinedOutput()
 	fmt.Printf("%s", out)
 	if err != nil {
