@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"regexp"
+	"strings"
 
 	"github.com/ursiform/sleuth"
 )
@@ -19,11 +21,13 @@ const ffmpegPort = "7843"
 
 func printAudioDevices() {
 	cmd := exec.Command("ffmpeg", "-list_devices", "true", "-f", "dshow", "-i", "dummy")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Print(err)
-	}
-	fmt.Printf("%s", output)
+	out, _ := cmd.CombinedOutput()
+
+	regex := regexp.MustCompile("(\"[A-z].*?\")")
+	dev := strings.Join(regex.FindAllString(fmt.Sprintf("%s", out), -1), "\n")
+
+	fmt.Println("Use one of these devices with the -a flag to stream audio from this device")
+	fmt.Print(dev)
 }
 
 /*
@@ -131,8 +135,8 @@ func main() {
 
 	flag.BoolVar(&listAudio, "list-audio", false, "Lists available audio devices")
 	flag.BoolVar(&listVideo, "list-video", false, "UNDEFINED: Lists available video devices")
-	flag.StringVar(&aSrc, "a", "none", "Audio device to stream")
-	flag.StringVar(&vSrc, "v", "none", "Video device to use")
+	flag.StringVar(&aSrc, "a", "", "Audio device to stream")
+	flag.StringVar(&vSrc, "v", "", "Video device to use")
 
 	flag.Parse()
 

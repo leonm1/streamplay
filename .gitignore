@@ -1,5 +1,4 @@
 # Binaries for programs and plugins
-*.exe
 *.dll
 *.so
 *.dylib
@@ -12,3 +11,5 @@
 
 # Project-local glide cache, RE: https://github.com/Masterminds/glide/issues/736
 .glide/
+pkg/server/debug
+.vscode/launch.json
