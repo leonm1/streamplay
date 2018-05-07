@@ -26,7 +26,7 @@ func main() {
 
 	log.Print("Found IP: ", ip)
 
-	vlc := exec.Command("ffplay", fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort))
+	vlc := exec.Command("ffplay", "-nodisp", fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort))
 
 	out, err := vlc.CombinedOutput()
 	fmt.Printf("%s", out)
