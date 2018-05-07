@@ -40,7 +40,7 @@ func autodiscover(iface string) {
 	config := &sleuth.Config{
 		Handler:   handler,
 		Interface: iface,
-		LogLevel:  "debug",
+		LogLevel:  "error",
 		Service:   "streamplay-ip",
 	}
 
@@ -129,8 +129,8 @@ func main() {
 
 	flag.BoolVar(&listAudio, "list-audio", false, "Lists available audio devices")
 	flag.BoolVar(&listVideo, "list-video", false, "UNDEFINED: Lists available video devices")
-	flag.StringVar(&aSrc, "a", "none", "Audio device to stream")
-	flag.StringVar(&vSrc, "v", "none", "Video device to use")
+	flag.StringVar(&aSrc, "a", "", "Audio device to stream")
+	flag.StringVar(&vSrc, "v", "", "Video device to use")
 	flag.StringVar(&iface, "iface", "wlp1s0", "Network interface on which to transmit")
 
 	flag.Parse()

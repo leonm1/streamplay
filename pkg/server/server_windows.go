@@ -40,7 +40,7 @@ func autodiscover() {
 	config := &sleuth.Config{
 		Handler:   handler,
 		Interface: "Wi-Fi",
-		LogLevel:  "debug",
+		LogLevel:  "error",
 		Service:   "streamplay-ip",
 	}
 

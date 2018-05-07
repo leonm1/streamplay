@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"time"
 
 	"github.com/ursiform/sleuth"
 )
@@ -16,7 +17,7 @@ const ffmpegPort = "7843"
 
 func main() {
 	var iface string
-	flag.StringVar(&iface, "iface", "eth0", "Network interface on which to listen")
+	flag.StringVar(&iface, "iface", "wlan0", "Network interface on which to listen")
 	flag.Parse()
 
 	ip, err := autodiscover(iface)
@@ -38,7 +39,7 @@ func main() {
 func autodiscover(iface string) (string, error) {
 	config := &sleuth.Config{
 		Interface: iface,
-		LogLevel:  "debug",
+		LogLevel:  "error",
 	}
 
 	client, err := sleuth.New(config)
@@ -50,6 +51,9 @@ func autodiscover(iface string) (string, error) {
 
 	// Wait for server to come online
 	client.WaitFor("streamplay-ip")
+
+	// Wait for server to finish coming online
+	time.Sleep(time.Second)
 
 	req, err := http.NewRequest("GET", ipURL, nil)
 	if err != nil {
