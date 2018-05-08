@@ -12,18 +12,25 @@ import (
 	"github.com/ursiform/sleuth"
 )
 
-const ipURL = "sleuth://streamplay-ip/ip:9872"
-const ffmpegPort = "7843"
+const (
+	ipURL      = "sleuth://streamplay-ip/ip:9872"
+	ffmpegPort = "7843"
+)
+
+var logLevel string
 
 func main() {
 	var iface string
 	flag.StringVar(&iface, "iface", "wlan0", "Network interface on which to listen")
+	flag.StringVar(&logLevel, "d", "silent", "Log level for sleuth ('debug', 'error', 'warn', or 'silent')")
 	flag.Parse()
 
 	go autodiscover(iface)
 	ip := GetOutboundIP()
 
-	stream := exec.Command("ffplay", "-nodisp", fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort))
+	stream := exec.Command("ffplay", "-nodisp", "-rtsp_flags", "listen",
+		fmt.Sprintf("rtsp://%s:%s", ip, ffmpegPort))
+
 	stream.Stderr = os.Stderr
 	stream.Stdout = os.Stdout
 
@@ -44,7 +51,7 @@ func autodiscover(iface string) {
 	config := &sleuth.Config{
 		Handler:   handler,
 		Interface: iface,
-		LogLevel:  "debug",
+		LogLevel:  logLevel,
 		Service:   "streamplay-ip",
 	}
 
