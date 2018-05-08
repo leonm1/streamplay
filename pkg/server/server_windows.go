@@ -3,20 +3,17 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
-	"time"
 
-	"github.com/ursiform/sleuth"
+	"github.com/zeromq/gyre/beacon"
 )
 
 const (
-	streamPort     = "7843"
-	ipDiscoveryURL = "sleuth://streamplay-ip/ip:9872"
+	streamPort    = "7843"
+	discoveryPort = 9872
 )
 
 var (
@@ -53,51 +50,17 @@ func printDev() {
 */
 
 func autodiscover(iface string) {
-	config := &sleuth.Config{
-		Interface: iface,
-		LogLevel:  logLevel,
-	}
+	b := beacon.New()
+	b = b.SetInterface(iface)
+	b = b.SetPort(discoveryPort)
 
-	client, err := sleuth.New(config)
-	defer client.Close()
-	if err != nil {
-		fmt.Print("Error initializing sleuth client: ", err)
-	}
+	b.Publish([]byte("Server"))
 
-	for {
-		// Wait for server to come online
-		client.WaitFor("streamplay-ip")
+	signals := b.Signals()
 
-		// Wait for server to finish coming online
-		time.Sleep(time.Second)
-		req, err := http.NewRequest("GET", ipDiscoveryURL, nil)
-		if err != nil {
-			fmt.Print("Error forming GET request to client: ", err)
-
-			continue
-		}
-
-		// Request IP from client
-		res, err := client.Do(req)
-		if err != nil {
-			fmt.Print("Error getting IP from client: ", err)
-			time.Sleep(time.Second) // Wait for client to disconnect
-			continue
-		}
-
-		// Read IP from response
-		ip, err := ioutil.ReadAll(res.Body)
-		res.Body.Close()
-		if err != nil {
-			fmt.Print("Error reading IP from client: ", err)
-			continue
-		}
-
-		// Send IP to stream func
-		ipChan <- string(ip)
-
-		// Sleep before repeating
-		time.Sleep(time.Second)
+	for s := range signals {
+		s := s.(beacon.Signal)
+		ipChan <- s.Addr
 	}
 }
 

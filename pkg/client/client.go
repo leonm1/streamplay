@@ -9,12 +9,13 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/ursiform/sleuth"
+	"github.com/zeromq/gyre/beacon"
 )
 
 const (
-	ipURL      = "sleuth://streamplay-ip/ip:9872"
-	ffmpegPort = "7843"
+	ipURL         = "sleuth://streamplay-ip/ip:9872"
+	ffmpegPort    = "7843"
+	discoveryPort = 9872
 )
 
 var (
@@ -53,27 +54,15 @@ type ipHandler struct{}
 // autodiscover locates other streamplay devices on the network and returns
 // the ip of the first server found
 func autodiscover(iface string) {
-	handler := new(ipHandler)
+	b := beacon.New()
+	b = b.SetInterface(iface)
+	b = b.SetPort(discoveryPort)
 
-	config := &sleuth.Config{
-		Handler:   handler,
-		Interface: iface,
-		LogLevel:  logLevel,
-		Service:   "streamplay-ip",
-	}
+	b.Publish([]byte("Client"))
 
-	client, err := sleuth.New(config)
-	defer client.Close()
-	if err != nil {
-		log.Fatal(err)
-	} else {
-		log.Println("Ready")
-	}
+	signals := b.Signals()
 
-	err = http.ListenAndServe(":8080", handler)
-	if err != nil {
-		log.Fatal(err)
-	}
+	<-signals
 }
 
 // ipHandler's ServeHTTP responds to any
