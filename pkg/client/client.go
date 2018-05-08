@@ -34,7 +34,7 @@ func main() {
 
 		ip := GetOutboundIP()
 
-		stream := exec.Command("ffplay", "-rtsp_flags", "listen", fmt.Sprintf("rtsp://%s:%d", ip, streamPort))
+		stream := exec.Command("ffplay", fmt.Sprintf("rtp://%s:%d", ip, streamPort))
 
 		stream.Stderr = os.Stderr
 		stream.Stdout = os.Stdout

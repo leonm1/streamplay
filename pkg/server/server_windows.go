@@ -191,8 +191,8 @@ func stream(aSrc, vSrc, ip string) {
 		"-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100",
 
 		// Output options
-		"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtsp", "-rtsp_transport", "tcp",
-		fmt.Sprintf("rtsp://%s:%d/live.sdp", ip, streamPort),
+		"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtp",
+		fmt.Sprintf("rtp://%s:%d", ip, streamPort),
 	}
 
 	stream := exec.Command("ffmpeg", args...)
