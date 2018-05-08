@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/grandcat/zeroconf"
 )
@@ -30,19 +31,21 @@ func main() {
 	if listDev {
 		printDev()
 	} else {
-		go autodiscover(ifaceStr)
+		for {
+			go autodiscover(ifaceStr)
 
-		ip := GetOutboundIP()
+			ip := GetOutboundIP()
+			stream := exec.Command("ffplay", "-autoexit", "-nodisp", "-rtsp_flags", "listen", fmt.Sprintf("rtsp://%s:%d", ip, streamPort))
 
-		stream := exec.Command("ffplay", fmt.Sprintf("rtp://%s:%d", ip, streamPort))
+			stream.Stderr = os.Stderr
+			stream.Stdout = os.Stdout
 
-		stream.Stderr = os.Stderr
-		stream.Stdout = os.Stdout
-
-		stream.Start()
-		stream.Wait()
-		fmt.Println("Finished stream")
-		doneCh <- true
+			stream.Start()
+			stream.Wait()
+			fmt.Println("Finished stream")
+			doneCh <- true
+			time.Sleep(time.Second)
+		}
 	}
 }
 
