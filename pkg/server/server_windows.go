@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,131 +14,200 @@ import (
 	"github.com/ursiform/sleuth"
 )
 
-const ffmpegPort = "7843"
-const ipURL = "sleuth://streamplay-ip/ip:9872"
+const (
+	streamPort     = "7843"
+	ipDiscoveryURL = "sleuth://streamplay-ip/ip:9872"
+)
+
+var (
+	ipChan   chan string
+	logLevel string
+)
 
 /*
 	Functions to handle selection of audio device
 */
 
-func printAudioDevices() {
+func printDev() {
+	// Regexp to extract device names
+	regex := regexp.MustCompile("(\"[A-z].*?\")")
+
+	// Pull input devices from ffmpeg
 	cmd := exec.Command("ffmpeg", "-list_devices", "true", "-f", "dshow", "-i", "dummy")
 	out, _ := cmd.CombinedOutput()
 
-	regex := regexp.MustCompile("(\"[A-z].*?\")")
-	dev := strings.Join(regex.FindAllString(fmt.Sprintf("%s", out), -1), "\n")
+	// Split audio and video devices: video will be outSl[0] and audio will be outSl[1]
+	outSl := strings.Split(string(out), "DirectShow audio devices")
 
-	fmt.Println("Use one of these devices with the -a flag to stream audio from this device")
-	fmt.Print(dev)
+	// Insert newline after each device
+	v := strings.Join(regex.FindAllString(fmt.Sprintf("%s", outSl[0]), -1), "\n")
+	a := strings.Join(regex.FindAllString(fmt.Sprintf("%s", outSl[1]), -1), "\n")
+
+	// Print out video devices followed by audio devices
+	fmt.Printf("Available video devices (may support audio as well):\n%s\n\n"+
+		"Available audio devices:\n%s", v, a)
 }
 
 /*
 	Functions to handle autodiscovery of service on local network
 */
 
-func autodiscover(iface string) (string, error) {
+func autodiscover(iface string) {
 	config := &sleuth.Config{
 		Interface: iface,
-		LogLevel:  "debug",
+		LogLevel:  logLevel,
 	}
 
 	client, err := sleuth.New(config)
 	defer client.Close()
 	if err != nil {
-		return "", err
-	}
-	log.Println("Ready")
-
-	// Wait for server to come online
-	client.WaitFor("streamplay-ip")
-
-	// Wait for server to finish coming online
-	time.Sleep(time.Second)
-
-	req, err := http.NewRequest("GET", ipURL, nil)
-	if err != nil {
-		return "", err
+		fmt.Print("Error initializing sleuth client: ", err)
 	}
 
-	res, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
+	for {
+		// Wait for server to come online
+		client.WaitFor("streamplay-ip")
 
-	ip, err := ioutil.ReadAll(res.Body)
-	res.Body.Close()
-	if err != nil {
-		return "", err
-	}
+		// Wait for server to finish coming online
+		time.Sleep(time.Second)
+		req, err := http.NewRequest("GET", ipDiscoveryURL, nil)
+		if err != nil {
+			fmt.Print("Error forming GET request to client: ", err)
 
-	return string(ip), nil
+			continue
+		}
+
+		// Request IP from client
+		res, err := client.Do(req)
+		if err != nil {
+			fmt.Print("Error getting IP from client: ", err)
+			time.Sleep(time.Second) // Wait for client to disconnect
+			continue
+		}
+
+		// Read IP from response
+		ip, err := ioutil.ReadAll(res.Body)
+		res.Body.Close()
+		if err != nil {
+			fmt.Print("Error reading IP from client: ", err)
+			continue
+		}
+
+		// Send IP to stream func
+		ipChan <- string(ip)
+
+		// Sleep before repeating
+		time.Sleep(time.Second)
+	}
 }
 
 /*
 	Functions to implement streaming with ffmpeg
 */
 
-func stream(vSrc, aSrc, ip string) {
-	log.Printf("Starting stream to %s...\n", ip)
+func streamAudio(aSrc string) {
+	for ip := range ipChan {
+		fmt.Printf("Streaming to %s:%s\n", ip, streamPort)
 
-	// Program args for ffmpeg
-	args := []string{
-		// 'dshow' us used for windows only
-		"-f", "dshow",
+		// Program args for ffmpeg
+		args := []string{
+			// 'dshow' us used for windows only
+			"-f", "dshow",
 
-		// Inputs
-		// With video: "-i", fmt.Sprintf("video='%s':audio='%s'", vSrc, aSrc),
-		"-i", fmt.Sprintf("audio=%s", aSrc),
-		/*
+			// Inputs
+			"-i", fmt.Sprintf("audio=%s", aSrc),
+
+			// Audio options
+			"-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100",
+
+			// Output options
+			"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtsp", "-rtsp_transport", "tcp",
+			fmt.Sprintf("rtsp://%s:%s", ip, streamPort),
+		}
+
+		stream := exec.Command("ffmpeg", args...)
+		stream.Stdout = os.Stdout
+		stream.Stderr = os.Stderr
+
+		err := stream.Start()
+		if err != nil {
+			fmt.Print(err)
+		}
+	}
+}
+
+func stream(aSrc, vSrc string) {
+	for ip := range ipChan {
+		fmt.Printf("Streaming to %s:%s\n", ip, streamPort)
+
+		if aSrc == "" {
+			// Duplicate video source for audio
+			aSrc = vSrc
+		}
+
+		// Program args for ffmpeg
+		args := []string{
+			// 'dshow' us used for windows only
+			"-f", "dshow",
+
+			// Inputs
+			"-i", fmt.Sprintf("video='%s':audio='%s'", vSrc, aSrc),
+
 			// Video options
 			"-preset", "ultrafast", "-vcodec", "libx264", "-tune", "zerolatency",
 			"-r", "24", "-async", "1",
-		*/
-		// Audio options
-		"-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100",
 
-		// Output options
-		"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtmp",
-		fmt.Sprintf("rtp://%s:%s", ip, ffmpegPort),
+			// Audio options
+			"-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100",
+
+			// Output options
+			"-maxrate", "1m", "-bufsize", "3000k", "-f", "rtsp", "-rtsp_transport", "tcp",
+			fmt.Sprintf("rtsp://%s:%s/live.sdp", ip, streamPort),
+		}
+
+		stream := exec.Command("ffmpeg", args...)
+		stream.Stdout = os.Stdout
+		stream.Stderr = os.Stderr
+
+		err := stream.Start()
+		if err != nil {
+			fmt.Print(err)
+		}
 	}
-
-	stream := exec.Command("ffmpeg", args...)
-
-	stream.Stdout = os.Stdout
-	stream.Stderr = os.Stderr
-	err := stream.Start()
-	if err != nil {
-		log.Print(err)
-	}
-	stream.Wait()
 }
 
 // main starts the autodiscovery server, parses flags, and begins streaming
 func main() {
 	var (
-		listAudio, listVideo bool
-		aSrc, vSrc, iface    string
+		listDev           bool
+		aSrc, vSrc, iface string
 	)
 
-	flag.BoolVar(&listAudio, "list-audio", false, "Lists available audio devices")
-	flag.BoolVar(&listVideo, "list-video", false, "UNDEFINED: Lists available video devices")
+	flag.BoolVar(&listDev, "dev", false, "Lists available input devices")
 	flag.StringVar(&aSrc, "a", "", "Audio device to stream")
 	flag.StringVar(&vSrc, "v", "", "Video device to use")
-	flag.StringVar(&iface, "iface", "Wi-Fi", "Network interface on which to listen")
-
+	flag.StringVar(&iface, "iface", "Wi-Fi", "Network interface on which to listen for clients")
+	flag.StringVar(&logLevel, "d", "silent", "Log level for sleuth ('debug', 'error', 'warn', or 'silent')")
 	flag.Parse()
 
-	for {
-		// Start autodiscovery server
-		ip, err := autodiscover(iface)
-		if err != nil {
-			log.Print("error in autodiscovery: ", err)
-		}
+	if listDev {
+		printDev()
+	} else {
+		ipChan = make(chan string)
 
-		if listAudio {
-			printAudioDevices()
+		// Start autodiscovery server
+		go autodiscover(iface)
+
+		// Default to audio streaming if no video device specified
+		if aSrc == "" && vSrc == "" {
+			fmt.Println("You must specify an audio device or a video device to stream with the -a or -v flags")
+			flag.Usage()
+		} else if vSrc == "" {
+			// Start streaming server with audio only
+			streamAudio(aSrc)
 		} else {
-			go stream(vSrc, aSrc, ip)
+			// Start streaming server with video
+			stream(aSrc, vSrc)
 		}
 	}
 }
