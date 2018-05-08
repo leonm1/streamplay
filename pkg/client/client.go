@@ -58,7 +58,10 @@ func autodiscover(iface string) {
 	b = b.SetInterface(iface)
 	b = b.SetPort(discoveryPort)
 
-	b.Publish([]byte("Client"))
+	err := b.Publish([]byte("Client"))
+	if err != nil {
+		log.Fatal("Error publishing beacon: ", err)
+	}
 
 	signals := b.Signals()
 

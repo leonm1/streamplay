@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -54,7 +55,10 @@ func autodiscover(iface string) {
 	b = b.SetInterface(iface)
 	b = b.SetPort(discoveryPort)
 
-	b.Publish([]byte("Server"))
+	err := b.Publish([]byte("Server"))
+	if err != nil {
+		log.Fatal("Error publishing beacon: ", err)
+	}
 
 	signals := b.Signals()
 
