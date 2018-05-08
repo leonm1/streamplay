@@ -5,43 +5,44 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 
-	"github.com/zeromq/gyre/beacon"
+	"github.com/grandcat/zeroconf"
 )
 
 const (
-	ipURL         = "sleuth://streamplay-ip/ip:9872"
-	ffmpegPort    = "7843"
-	discoveryPort = 9872
+	streamPort = 7843
 )
 
-var (
-	logLevel string
-	jobs     chan bool
-)
+var doneCh = make(chan bool)
 
 func main() {
-	var iface string
-	jobs = make(chan bool)
+	var (
+		ifaceStr string
+		listDev  bool
+	)
 
-	flag.StringVar(&iface, "iface", "wlan0", "Network interface on which to listen")
-	flag.StringVar(&logLevel, "d", "silent", "Log level for sleuth ('debug', 'error', 'warn', or 'silent')")
+	flag.StringVar(&ifaceStr, "iface", "wlan0", "Network interface on which to listen")
+	flag.BoolVar(&listDev, "dev", false, "Lists available network interfaces")
 	flag.Parse()
 
-	go autodiscover(iface)
-	ip := GetOutboundIP()
+	if listDev {
+		printDev()
+	} else {
+		go autodiscover(ifaceStr)
 
-	for range jobs {
-		stream := exec.Command("ffplay", "-nodisp", "-rtsp_flags", "listen",
-			fmt.Sprintf("rtsp://%s:%s", ip, ffmpegPort))
+		ip := GetOutboundIP()
+
+		stream := exec.Command("ffplay", "-rtsp_flags", "listen", fmt.Sprintf("rtsp://%s:%d", ip, streamPort))
 
 		stream.Stderr = os.Stderr
 		stream.Stdout = os.Stdout
 
-		stream.Run()
+		stream.Start()
+		stream.Wait()
+		fmt.Println("Finished stream")
+		doneCh <- true
 	}
 }
 
@@ -49,30 +50,33 @@ func main() {
 	Functions to handle autodiscovery of service on local network
 */
 
-type ipHandler struct{}
+func autodiscover(ifaceStr string) {
+	/*
+		Start client broadcast
+	*/
+	iface, err := net.InterfaceByName(ifaceStr)
+	if err != nil {
+		log.Fatalf("Could not find interface '%s': %s", iface.Name, err)
+	}
 
-// autodiscover locates other streamplay devices on the network and returns
-// the ip of the first server found
-func autodiscover(iface string) {
-	b := beacon.New()
-	b = b.SetInterface(iface)
-	b = b.SetPort(discoveryPort)
+	meta := []string{"version=0.1.0"}
+	interfaces := []net.Interface{*iface}
 
-	b.Publish([]byte("Client"))
+	service, err := zeroconf.Register(
+		"streamplay-client",       // service instance name
+		"_streamplay-client._tcp", // service type and protocl
+		"local.",                  // service domain
+		streamPort,                // service port
+		meta,                      // service metadata
+		interfaces,                // register on ifaces listed in
+	)
+	defer service.Shutdown()
+	if err != nil {
+		panic("Error starting zeroconf browser: " + err.Error())
+	}
 
-	signals := b.Signals()
-
-	<-signals
-}
-
-// ipHandler's ServeHTTP responds to any
-func (h *ipHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	r.Body.Close()
-	body := GetOutboundIP()
-	fmt.Fprint(w, body)
-
-	// Send signal to begin stream
-	jobs <- true
+	<-doneCh
+	fmt.Println("Stopping zeroconf server")
 }
 
 // GetOutboundIP gets the preferred outbound ip of this machine
@@ -86,4 +90,21 @@ func GetOutboundIP() net.IP {
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 
 	return localAddr.IP
+}
+
+func printDev() {
+	// Get network interfaces
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		log.Fatal("Could not get network interfaces")
+	}
+
+	// Put interfaces into a list 'i'
+	var ifaceStr string
+	for i := 0; i < len(ifaces); i++ {
+		ifaceStr += "\"" + ifaces[i].Name + "\"\n"
+	}
+
+	// Print out video devices followed by audio devices
+	fmt.Printf("Available network interfaces:\n%s\n", ifaceStr)
 }
