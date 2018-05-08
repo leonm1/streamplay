@@ -17,10 +17,15 @@ const (
 	ffmpegPort = "7843"
 )
 
-var logLevel string
+var (
+	logLevel string
+	jobs     chan bool
+)
 
 func main() {
 	var iface string
+	jobs = make(chan bool)
+
 	flag.StringVar(&iface, "iface", "wlan0", "Network interface on which to listen")
 	flag.StringVar(&logLevel, "d", "silent", "Log level for sleuth ('debug', 'error', 'warn', or 'silent')")
 	flag.Parse()
@@ -28,13 +33,15 @@ func main() {
 	go autodiscover(iface)
 	ip := GetOutboundIP()
 
-	stream := exec.Command("ffplay", "-nodisp", "-rtsp_flags", "listen",
-		fmt.Sprintf("rtsp://%s:%s", ip, ffmpegPort))
+	for range jobs {
+		stream := exec.Command("ffplay", "-nodisp", "-rtsp_flags", "listen",
+			fmt.Sprintf("rtsp://%s:%s", ip, ffmpegPort))
 
-	stream.Stderr = os.Stderr
-	stream.Stdout = os.Stdout
+		stream.Stderr = os.Stderr
+		stream.Stdout = os.Stdout
 
-	stream.Run()
+		stream.Run()
+	}
 }
 
 /*
@@ -72,10 +79,11 @@ func autodiscover(iface string) {
 // ipHandler's ServeHTTP responds to any
 func (h *ipHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body.Close()
-
 	body := GetOutboundIP()
-
 	fmt.Fprint(w, body)
+
+	// Send signal to begin stream
+	jobs <- true
 }
 
 // GetOutboundIP gets the preferred outbound ip of this machine
