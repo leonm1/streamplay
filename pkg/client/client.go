@@ -36,26 +36,24 @@ func main() {
 	if listDev {
 		printDev()
 	} else {
-		// Start zeroconf server
-		go autodiscover(ifaceStr)
 		ip := GetOutboundIP()
-
-		stream := exec.Command("ffplay", "-autoexit", "-nodisp", "-rtsp_flags", "listen", fmt.Sprintf("rtsp://%s:%d", ip, streamPort))
-
-		// If in debug mode, set ffplay output to stdout
-		if debug {
-			stream.Stderr = os.Stderr
-			stream.Stdout = os.Stdout
-		}
-
 		// Restart ffplay and wait for new stream in case stream fails
 		for {
+			stream := exec.Command("ffplay", "-autoexit", "-nodisp", "-rtsp_flags", "listen", fmt.Sprintf("rtsp://%s:%d", ip, streamPort))
+
+			// If in debug mode, set ffplay output to stdout
+			if debug {
+				stream.Stderr = os.Stderr
+				stream.Stdout = os.Stdout
+			}
+
+			go autodiscover(ifaceStr)
+
 			fmt.Println("Waiting for stream...")
 			stream.Run()
-			fmt.Println("Finished stream")
 
-			// Wait before starting opening ffplay again
-			time.Sleep(time.Second)
+			// Signal exit for autodiscovery server
+			doneCh <- true
 		}
 	}
 }
@@ -65,6 +63,9 @@ func main() {
 */
 
 func autodiscover(ifaceStr string) {
+	// Wait before starting to prevent race conditions
+	time.Sleep(time.Second)
+
 	/*
 		Start client broadcast
 	*/

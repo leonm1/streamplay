@@ -77,6 +77,9 @@ func autodiscover() {
 			if _, loaded := streams[ip]; !loaded {
 				fmt.Println("Found new client:", ip)
 
+				// Wait to ensure client is ready to receive stream
+				//time.Sleep(time.Second)
+
 				// Default to audio-only streaming if video source is empty
 				if vSrc == "" {
 					go streamAudio(aSrc, ip)
