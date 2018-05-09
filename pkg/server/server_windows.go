@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/exec"
 	"regexp"
@@ -16,19 +15,21 @@ import (
 )
 
 const (
-	streamPort = 7843
+	streamPort = 7843 // Port over which to stream with FFmpeg
 )
 
 var (
-	ipChan               chan string
-	aSrc, vSrc, logLevel string
-	streams              map[string]bool
+	aSrc, vSrc string          // Sources for stream set via cli flags
+	streams    map[string]bool // Index of in-progress streams
+	debug      bool            // Flag to output debug info
 )
 
 /*
 	Functions to handle selection of audio device
 */
 
+// printDev prints the audio/video devices available through DirectShow
+// accessible to FFmpeg
 func printDev() {
 	// Regexp to extract device names
 	regex := regexp.MustCompile("(\"[A-z].*?\")")
@@ -44,51 +45,18 @@ func printDev() {
 	v := strings.Join(regex.FindAllString(fmt.Sprintf("%s", outSl[0]), -1), "\n")
 	a := strings.Join(regex.FindAllString(fmt.Sprintf("%s", outSl[1]), -1), "\n")
 
-	// Get network interfaces
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		log.Println("Could not get network interfaces")
-	}
-
-	// Put interfaces into a list 'i'
-	var ifaceStr string
-	for i := 0; i < len(ifaces); i++ {
-		ifaceStr += "\"" + ifaces[i].Name + "\"\n"
-	}
-
 	// Print out video devices followed by audio devices
 	fmt.Printf("Available video devices (may support audio as well):\n%s\n\n"+
-		"Available audio devices:\n%s\n\nAvailable network interfaces:\n%s\n", v, a, ifaceStr)
+		"Available audio devices:\n%s\n", v, a)
 }
 
 /*
 	Functions to handle autodiscovery of service on local network
 */
 
-func autodiscover(ifaceStr string) {
-	/*
-		Start server broadcast
-	*/
-	iface, err := net.InterfaceByName(ifaceStr)
-	if err != nil {
-		log.Fatalf("Could not find interface '%s': %s", iface.Name, err)
-	}
-
-	meta := []string{"version=0.1.0"}
-	interfaces := []net.Interface{*iface}
-
-	service, err := zeroconf.Register(
-		"streamplay-server",       // service instance name
-		"_streamplay-server._tcp", // service type and protocl
-		"local.",                  // service domain
-		streamPort,                // service port
-		meta,                      // service metadata
-		interfaces,                // register on ifaces listed in
-	)
-	defer service.Shutdown()
-	if err != nil {
-		panic("Error starting zeroconf browser: " + err.Error())
-	}
+// autodiscover browses the LAN for zeroconf clients to stream,
+// ensures there is no existing stream to the client, and opens a new stream
+func autodiscover() {
 	/*
 		Get clients
 	*/
@@ -100,16 +68,20 @@ func autodiscover(ifaceStr string) {
 	// Channel to receive discovered service entries
 	entries := make(chan *zeroconf.ServiceEntry)
 
+	// Service discovery handler
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		for entry := range results {
-			log.Println("Found client:", entry.ServiceInstanceName(), entry.Text)
 			ip := entry.AddrIPv4[0].String()
 
+			// If ip is logged in map, another stream is already in progress to client
 			if _, loaded := streams[ip]; !loaded {
+				fmt.Println("Found new client:", ip)
+
+				// Default to audio-only streaming if video source is empty
 				if vSrc == "" {
-					streamAudio(aSrc, ip)
+					go streamAudio(aSrc, ip)
 				} else {
-					stream(aSrc, vSrc, ip)
+					go stream(aSrc, vSrc, ip)
 				}
 			}
 		}
@@ -117,11 +89,15 @@ func autodiscover(ifaceStr string) {
 
 	ctx := context.Background()
 
+	// Search for new clients every five seconds
 	for {
+		// Search for available clients
 		err = resolver.Browse(ctx, "_streamplay-client._tcp", "local.", entries)
 		if err != nil {
 			log.Fatalln("Failed to browse:", err.Error())
 		}
+
+		// Wait five seconds in between each search for clients
 		time.Sleep(5 * time.Second)
 	}
 
@@ -132,9 +108,14 @@ func autodiscover(ifaceStr string) {
 	Functions to implement streaming with ffmpeg
 */
 
+// streamAudio opens an audio-only stream from 'aSrc' to the
+// 'ip' parameter on const 'streamPort'
 func streamAudio(aSrc, ip string) {
-	fmt.Printf("Streaming to %s:%d\n", ip, streamPort)
+	fmt.Printf("Opening stream to %s:%d\n", ip, streamPort)
+
+	// Log in progress streams to prevent multiple streams to the same source
 	streams[ip] = true
+	defer delete(streams, ip)
 
 	// Program args for ffmpeg
 	args := []string{
@@ -153,31 +134,36 @@ func streamAudio(aSrc, ip string) {
 	}
 
 	stream := exec.Command("ffmpeg", args...)
-	stream.Stdout = os.Stdout
-	stream.Stderr = os.Stderr
+	if debug {
+		stream.Stdout = os.Stdout
+		stream.Stderr = os.Stderr
+	}
 
-	err := stream.Start()
+	err := stream.Run()
 	if err != nil {
 		fmt.Print(err)
 	}
-	stream.Wait()
-	fmt.Println("Closed stream")
-	delete(streams, ip)
 
+	fmt.Println("Closed stream to", ip)
 }
 
+// stream opens an video stream from 'vSrc' to the
+// 'ip' parameter on const 'streamPort'
 func stream(aSrc, vSrc, ip string) {
-	fmt.Printf("Streaming to %s:%d\n", ip, streamPort)
+	fmt.Printf("Opening stream to %s:%d\n", ip, streamPort)
+
+	// Log in progress streams to prevent multiple streams to the same source
 	streams[ip] = true
+	defer delete(streams, ip)
 
 	if aSrc == "" {
-		// Duplicate video source for audio
+		// Duplicate video source for audio if audio is not present
 		aSrc = vSrc
 	}
 
 	// Program args for ffmpeg
 	args := []string{
-		// 'dshow' us used for windows only
+		// 'dshow' is used for windows only
 		"-f", "dshow",
 
 		// Inputs
@@ -196,46 +182,46 @@ func stream(aSrc, vSrc, ip string) {
 	}
 
 	stream := exec.Command("ffmpeg", args...)
-	stream.Stdout = os.Stdout
-	stream.Stderr = os.Stderr
+	if debug {
+		stream.Stdout = os.Stdout
+		stream.Stderr = os.Stderr
+	}
 
-	err := stream.Start()
+	err := stream.Run()
 	if err != nil {
 		fmt.Print(err)
 	}
-	stream.Wait()
-	fmt.Println("Closed stream")
-	delete(streams, ip)
+
+	fmt.Println("Closed stream to", ip)
 }
 
-// main starts the autodiscovery server, parses flags, and begins streaming
+// main starts parses the cli flags and starts discovering and handling new clients
 func main() {
 	var (
-		listDev  bool
-		ifaceStr string
+		listDev bool // Flag to display sources
 	)
 
 	flag.BoolVar(&listDev, "dev", false, "Lists available input devices")
-	flag.StringVar(&ifaceStr, "iface", "Wi-Fi", "Network interface on which to listen")
 	flag.StringVar(&aSrc, "a", "", "Audio device to stream")
 	flag.StringVar(&vSrc, "v", "", "Video device to use")
-	flag.StringVar(&logLevel, "d", "silent", "Log level for sleuth ('debug', 'error', 'warn', or 'silent')")
+	flag.BoolVar(&debug, "d", false, "Output debug information")
 	flag.Parse()
 
 	if listDev {
 		printDev()
 	} else {
-		ipChan = make(chan string)
-
-		// Default to audio streaming if no video device specified
+		// Output help information if no devices specified
 		if aSrc == "" && vSrc == "" {
 			fmt.Println("You must specify an audio device or a video device to stream with the -a or -v flags")
 			fmt.Println("Available devices:")
 			printDev()
 			flag.Usage()
-		} else if vSrc == "" {
+		} else {
+			// Initialize global map of in-progress streams
 			streams = make(map[string]bool)
-			autodiscover(ifaceStr)
+
+			// Start autodiscovery server/stream handling
+			autodiscover()
 		}
 	}
 }
